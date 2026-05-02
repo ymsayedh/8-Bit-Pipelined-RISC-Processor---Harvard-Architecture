@@ -1,0 +1,44 @@
+module tb_Stack_Test();
+    reg clk, reset;
+    reg [7:0] IN_PORT;
+    wire [7:0] OUT_PORT;
+    
+    ProcessorTop DUT(
+        .clk(clk), .reset(reset), .IN_PORT(IN_PORT), .OUT_PORT(OUT_PORT)
+    );
+
+    always #5 clk = ~clk;
+
+    initial begin
+        $monitor("T:%3d Op:%h | R0:%h SP:%h | Mem[FF]:%h Mem[FE]:%h", 
+                 $time, DUT.opcode_e, DUT.rf.regs[0], DUT.rf.regs[3], 
+                 DUT.dmem.mem[255], DUT.dmem.mem[254]);
+
+        clk = 0; reset = 1; IN_PORT = 0;
+        #10 reset = 0;
+        
+        $display("=== STACK TEST (PUSH/POP) ===");
+        
+        // 1. LDM R0, #AA (Load value to push)
+        DUT.fetch.imem.mem[0] = 8'hC0; DUT.fetch.imem.mem[1] = 8'hAA;
+        
+        // 2. PUSH R0 (Should write AA to Mem[FF], SP -> FE)
+        DUT.fetch.imem.mem[2] = 8'h70;
+        
+        // 3. NOPs (Wait for SP update to complete)
+        DUT.fetch.imem.mem[3] = 8'h00;
+        DUT.fetch.imem.mem[4] = 8'h00;
+        
+        // 4. CLR R0 (Load 00 to R0)
+        DUT.fetch.imem.mem[5] = 8'hC0; DUT.fetch.imem.mem[6] = 8'h00;
+        
+        // 5. POP R0 (Should read Mem[FF], SP -> FF, R0 -> AA)
+        DUT.fetch.imem.mem[7] = 8'h74;
+
+        // 6. NOPs
+        DUT.fetch.imem.mem[8] = 8'h00;
+        DUT.fetch.imem.mem[9] = 8'h00;
+
+        #200 $finish;
+    end
+endmodule

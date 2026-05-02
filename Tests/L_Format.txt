@@ -1,0 +1,112 @@
+module tb_ProcessorTop();
+
+    reg clk, reset;
+    reg [7:0] IN_PORT;
+    wire [7:0] OUT_PORT;
+
+    ProcessorTop DUT(
+        .clk(clk), 
+        .reset(reset), 
+        .IN_PORT(IN_PORT), 
+        .OUT_PORT(OUT_PORT)
+    );
+
+    always #5 clk = ~clk;
+
+    // Monitor: Registers + Specific Memory Locations
+    initial begin
+        $monitor("Time:%3d | PC:%h | Op:%h | R0:%h | R1:%h | R2:%h | R3:%h | Mem[30]:%h | Mem[80]:%h", 
+                 $time, DUT.PC_f, DUT.opcode_e, 
+                 DUT.rf.regs[0], DUT.rf.regs[1], DUT.rf.regs[2], DUT.rf.regs[3],
+                 DUT.dmem.mem[8'h30], DUT.dmem.mem[8'h80]);
+    end
+
+    reg [7:0] out_history [0:10];
+    integer out_count;
+
+    always @(posedge clk) begin
+        if (OUT_PORT !== 0 && (out_count == 0 || OUT_PORT !== out_history[out_count-1])) begin
+            out_history[out_count] = OUT_PORT;
+            $display(">>> [Output Event] OUT_PORT updated to %h at time %0t", OUT_PORT, $time);
+            out_count = out_count + 1;
+        end
+    end
+
+    initial begin
+        clk = 0;
+        reset = 1;
+        IN_PORT = 8'h00;
+        out_count = 0;
+
+        // --- BACKDOOR LOAD PROGRAM (Memory Ops Test) ---
+        #1; 
+        $display("=== Loading LDD/STD/LDI/STI Test Program ===");
+        
+        // 1. LDM R1, #0x55 (Value to store)
+        // Opcode C(12), ra=0, rb=1 -> C1
+        DUT.fetch.imem.mem[0] = 8'hC1; 
+        DUT.fetch.imem.mem[1] = 8'h55;
+
+        // 2. LDM R2, #0x80 (Pointer address)
+        // Opcode C(12), ra=0, rb=2 -> C2
+        DUT.fetch.imem.mem[2] = 8'hC2;
+        DUT.fetch.imem.mem[3] = 8'h80;
+
+        // 3. STD 0x30, R1 (Store R1 to Memory[0x30])
+        // Opcode C(12), ra=2(STD), rb=1 -> C9 (1100 10 01)
+        DUT.fetch.imem.mem[4] = 8'hC9;
+        DUT.fetch.imem.mem[5] = 8'h30; // The address ea
+
+        // 4. LDD R3, 0x30 (Load R3 from Memory[0x30])
+        // Opcode C(12), ra=1(LDD), rb=3 -> C7 (1100 01 11)
+        DUT.fetch.imem.mem[6] = 8'hC7;
+        DUT.fetch.imem.mem[7] = 8'h30; // The address ea
+
+        // 5. STI [R2], R3 (Store R3 to Mem[R2] -> Mem[0x80])
+        // Opcode 14(E), ra=2, rb=3 -> EB (1110 10 11)
+        DUT.fetch.imem.mem[8] = 8'hEB;
+
+        // 6. LDI R0, [R2] (Load R0 from Mem[R2] -> Mem[0x80])
+        // Opcode 13(D), ra=2, rb=0 -> D8 (1101 10 00)
+        DUT.fetch.imem.mem[9] = 8'hD8;
+
+        // 7. OUT R0
+        // Opcode 7, ra=2, rb=0 -> 78
+        DUT.fetch.imem.mem[10] = 8'h78;
+        
+        // Fill NOPs
+        DUT.fetch.imem.mem[11] = 8'h00;
+        DUT.fetch.imem.mem[12] = 8'h00;
+
+        #10 reset = 0; 
+        
+        $display("=== Starting Test: Memory Instructions ===");
+        $display("Expected Sequence:");
+        $display("  1. R1=55, R2=80");
+        $display("  2. STD: Mem[30] becomes 55");
+        $display("  3. LDD: R3 becomes 55 (read from Mem[30])");
+        $display("  4. STI: Mem[80] becomes 55 (store R3 to address in R2)");
+        $display("  5. LDI: R0 becomes 55 (read from address in R2)");
+        $display("  6. OUT: Output 55");
+
+        #200;
+        
+        $display("\n=== Final Results ===");
+        $display("Mem[30]: %h (Expected: 55)", DUT.dmem.mem[8'h30]);
+        $display("Mem[80]: %h (Expected: 55)", DUT.dmem.mem[8'h80]);
+        $display("R0     : %h (Expected: 55)", DUT.rf.regs[0]);
+        
+        if (DUT.rf.regs[0] === 8'h55 && DUT.dmem.mem[8'h30] === 8'h55)
+            $display("[SUCCESS] Memory Logic passed.");
+        else
+            $display("[FAILURE] Memory Logic failed.");
+
+        $finish;
+    end
+
+    initial begin
+        $dumpfile("dump.vcd");
+        $dumpvars(0, tb_ProcessorTop);
+    end
+
+endmodule

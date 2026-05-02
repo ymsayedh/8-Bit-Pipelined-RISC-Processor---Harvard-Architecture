@@ -1,0 +1,78 @@
+module tb_ProcessorTop();
+
+    reg clk, reset;
+    reg [7:0] IN_PORT;
+    wire [7:0] OUT_PORT;
+    
+    // Instantiate the Processor
+    ProcessorTop DUT(
+        .clk(clk), 
+        .reset(reset), 
+        .IN_PORT(IN_PORT), 
+        .OUT_PORT(OUT_PORT)
+    );
+
+    // Clock Generation
+    always #5 clk = ~clk;
+
+    // Monitor internal signals
+    initial begin
+        $monitor("Time:%3d | PC:%h | Op_CU:%b | Op_E:%b | R1:%h | R2:%h | OUT:%h", 
+                 $time, DUT.PC_f, DUT.CU.alu_op, DUT.alu_op_e, DUT.rf.regs[1], DUT.rf.regs[2], OUT_PORT);
+    end
+
+    initial begin
+        // Initialize
+        clk = 0; reset = 1;
+        IN_PORT = 8'h00;
+        
+        // Reset sequence
+        #10 reset = 0; 
+        
+        $display("=== Part 2: Logic & MOV Test (No Stalls) ===");
+        
+        // 1. LDM R1, #F0 (1111 0000)
+        // Op=12(C), ra=0, rb=1 -> Hex: C1
+        DUT.fetch.imem.mem[0] = 8'hC1; 
+        DUT.fetch.imem.mem[1] = 8'hF0;
+        
+        // 2. LDM R2, #0F (0000 1111)
+        // Op=12(C), ra=0, rb=2 -> Hex: C2
+        DUT.fetch.imem.mem[2] = 8'hC2; 
+        DUT.fetch.imem.mem[3] = 8'h0F;
+        
+        // 3. OR R1, R2 (R1 = F0 | 0F = FF)
+        // Op=5, ra=1, rb=2 -> Hex: 56
+        DUT.fetch.imem.mem[4] = 8'h56;
+        
+        // 4. LDM R2, #AA (1010 1010)
+        // Immediate update to R2 to test hazard handling
+        DUT.fetch.imem.mem[5] = 8'hC2; 
+        DUT.fetch.imem.mem[6] = 8'hAA;
+        
+        // 5. AND R1, R2 (R1 = FF & AA = AA)
+        // Op=4, ra=1, rb=2 -> Hex: 46
+        DUT.fetch.imem.mem[7] = 8'h46;
+        
+        // 6. MOV R0, R1 (Copy AA to R0)
+        // Op=1, ra=0, rb=1 -> Hex: 11 (FIXED from 10)
+        DUT.fetch.imem.mem[8] = 8'h11; 
+        
+        // 7. OUT R0 (Result should be AA)
+        // Op=7, ra=2, rb=0 -> Hex: 78
+        DUT.fetch.imem.mem[9] = 8'h78;
+        
+        // Stop/Safety
+        DUT.fetch.imem.mem[10] = 8'h00;
+        DUT.fetch.imem.mem[11] = 8'h00;
+
+        #200;
+        $finish;
+    end
+
+    initial begin
+        $dumpfile("dump.vcd");
+        $dumpvars(0, tb_ProcessorTop);
+    end
+
+endmodule

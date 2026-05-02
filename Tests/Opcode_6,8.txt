@@ -1,0 +1,195 @@
+module tb_ProcessorTop();
+
+
+
+    reg clk, reset;
+
+    reg [7:0] IN_PORT;
+
+    wire [7:0] OUT_PORT;
+
+   
+
+    // Instantiate the Processor
+
+    ProcessorTop DUT(
+
+        .clk(clk),
+
+        .reset(reset),
+
+        .IN_PORT(IN_PORT),
+
+        .OUT_PORT(OUT_PORT)
+
+    );
+
+
+
+    // Clock Generation
+
+    always #5 clk = ~clk;
+
+
+
+    // Monitor internal signals
+
+    initial begin
+
+        // Monitor: Time, PC, Opcode, R0, R1, R2, SP(R3), Flags(ZNCV), OUT
+
+        $monitor("T:%3d | PC:%h | Op:%h | R0:%h R1:%h R2:%h SP:%h | Flags:%b%b%b%b | OUT:%h",
+
+                 $time, DUT.PC_f, DUT.opcode_e,
+
+                 DUT.rf.regs[0], DUT.rf.regs[1], DUT.rf.regs[2], DUT.rf.regs[3],
+
+                 DUT.ccr.Z, DUT.ccr.N, DUT.ccr.C, DUT.ccr.V,
+
+                 OUT_PORT);
+
+    end
+
+
+
+    initial begin
+
+        // 1. Initialize
+
+        clk = 0; reset = 1;
+
+        IN_PORT = 8'h55; // Set Input Port to 0x55 for IN test
+
+       
+
+        // 2. Reset
+
+        #10 reset = 0;
+
+       
+
+        $display("=== Testing Opcodes 6, 7, 8 ===");
+
+       
+
+        // --- SETUP: LDM R1, #05 ---
+
+        // Op=12(C), ra=0, rb=1 -> C1 05
+
+        DUT.fetch.imem.mem[0] = 8'hC1; DUT.fetch.imem.mem[1] = 8'h05;
+
+
+
+        // --- TEST OPCODE 8: ARITHMETIC ---
+
+       
+
+        // 1. INC R1 (R1 = 5 + 1 = 6)
+
+        // Op=8, ra=2(INC), rb=1 -> Hex: 89
+
+        DUT.fetch.imem.mem[2] = 8'h89;
+
+
+
+        // 2. DEC R1 (R1 = 6 - 1 = 5)
+
+        // Op=8, ra=3(DEC), rb=1 -> Hex: 8D
+
+        DUT.fetch.imem.mem[3] = 8'h8D;
+
+
+
+        // 3. NOT R1 (R1 = ~5 = FA)
+
+        // Op=8, ra=0(NOT), rb=1 -> Hex: 81
+
+        DUT.fetch.imem.mem[4] = 8'h81;
+
+
+
+        // 4. NEG R1 (R1 = -(-6) = 6) [Note: ~5 is FA (-6). 2's comp of FA is 06]
+
+        // Op=8, ra=1(NEG), rb=1 -> Hex: 85
+
+        DUT.fetch.imem.mem[5] = 8'h85;
+
+
+
+        // --- TEST OPCODE 6: FLAGS & ROTATES ---
+
+       
+
+        // 5. SETC (Set Carry Flag = 1)
+
+        // Op=6, ra=2, rb=0 -> Hex: 68
+
+        DUT.fetch.imem.mem[6] = 8'h68;
+
+
+
+        // 6. LDM R2, #81 (Binary 1000 0001) - Prepare for rotate
+
+        DUT.fetch.imem.mem[7] = 8'hC2; DUT.fetch.imem.mem[8] = 8'h81;
+
+
+
+        // 7. RLC R2 (Rotate Left through Carry)
+
+        // Old C=1, R2=10000001.
+
+        // New C = R2[7] = 1. New R2 = {R2[6:0], Old_C} = {0000001, 1} = 03.
+
+        // Op=6, ra=0(RLC), rb=2 -> Hex: 62
+
+        DUT.fetch.imem.mem[9] = 8'h62;
+
+
+
+        // 8. CLRC (Clear Carry Flag = 0)
+
+        // Op=6, ra=3, rb=0 -> Hex: 6C
+
+        DUT.fetch.imem.mem[10] = 8'h6C;
+
+       
+
+        // 9. RRC R2 (Rotate Right through Carry)
+
+        // Old C=0, R2=03 (00000011).
+
+        // New C = R2[0] = 1. New R2 = {Old_C, R2[7:1]} = {0, 0000001} = 01.
+
+        // Op=6, ra=1(RRC), rb=2 -> Hex: 66
+
+        DUT.fetch.imem.mem[11] = 8'h66;
+
+       
+
+        // END
+
+        DUT.fetch.imem.mem[12] = 8'h00;
+
+        DUT.fetch.imem.mem[13] = 8'h00;
+
+
+
+        #300;
+
+        $finish;
+
+    end
+
+
+
+    initial begin
+
+        $dumpfile("dump.vcd");
+
+        $dumpvars(0, tb_ProcessorTop);
+
+    end
+
+
+
+endmodule

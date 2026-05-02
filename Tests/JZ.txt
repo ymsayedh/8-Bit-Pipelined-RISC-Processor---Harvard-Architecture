@@ -1,0 +1,114 @@
+module tb_ProcessorTop();
+
+    reg clk, reset;
+    reg [7:0] IN_PORT;
+    wire [7:0] OUT_PORT;
+
+    ProcessorTop DUT(
+        .clk(clk), 
+        .reset(reset), 
+        .IN_PORT(IN_PORT), 
+        .OUT_PORT(OUT_PORT)
+    );
+
+    // Clock Generation
+    always #5 clk = ~clk;
+
+    // Monitor internal signals
+    initial begin
+        $monitor("Time:%3d | PC_F:%h | Op_D:%h | Z_Flag:%b | Flush:%b | R0:%h | R3:%h", 
+                 $time, DUT.PC_f, DUT.opcode_d, DUT.Z, DUT.ifid.flush, DUT.rf.regs[0], DUT.rf.regs[3]);
+    end
+
+    // Track Output Port
+    reg [7:0] out_history [0:10];
+    integer out_count;
+    always @(posedge clk) begin
+        if (OUT_PORT !== 0 && (out_count == 0 || OUT_PORT !== out_history[out_count-1])) begin
+            out_history[out_count] = OUT_PORT;
+            $display(">>> [Output Event] OUT_PORT updated to %h at time %0t", OUT_PORT, $time);
+            out_count = out_count + 1;
+        end
+    end
+
+    initial begin
+        clk = 0;
+        reset = 1;
+        IN_PORT = 8'h00;
+        out_count = 0;
+
+        // --- BACKDOOR LOAD PROGRAM (JZ + Flush + Hazard Fix) ---
+        #1; 
+        $display("=== Loading B-Format Test with Hazard Fix (NOPs) ===");
+        
+        // 1. LDM R1, #10 (0x0A)
+        DUT.fetch.imem.mem[0] = 8'hC1; 
+        DUT.fetch.imem.mem[1] = 8'h0A;
+
+        // 2. LDM R2, #10 (0x0A)
+        DUT.fetch.imem.mem[2] = 8'hC2; 
+        DUT.fetch.imem.mem[3] = 8'h0A;
+
+        // 3. SUB R1, R2 (Z becomes 1)
+        DUT.fetch.imem.mem[4] = 8'h36; 
+
+        // 4. NOP (Wait for Flags to settle)
+        DUT.fetch.imem.mem[5] = 8'h00;
+
+        // 5. LDM R3, #0xF0 (Target Address = 14)
+        // Note: Target is 0E because we inserted 3 NOPs below
+        DUT.fetch.imem.mem[6] = 8'hC3; 
+        DUT.fetch.imem.mem[7] = 8'hF0; 
+
+        // 7. JZ R3 (Jump to 0xF0 if Z=1) 
+        // Address is 0x0B (11 decimal)
+        DUT.fetch.imem.mem[8] = 8'h93;
+
+        // 8. LDM R0, #EE (THIS SHOULD BE FLUSHED/SKIPPED)
+        // Address is 0x0C (12 decimal)
+        DUT.fetch.imem.mem[9] = 8'hC0; 
+        DUT.fetch.imem.mem[10] = 8'hEE;
+
+        // 9. TARGET: LDM R0, #55 (Success Code) 
+        // Address is 0x0E (14 decimal)
+        DUT.fetch.imem.mem[246] = 8'hC0; 
+        DUT.fetch.imem.mem[247] = 8'h55;
+
+        // 10. OUT R0
+        DUT.fetch.imem.mem[248] = 8'h78;
+        
+        // Fill remaining with NOPs
+        DUT.fetch.imem.mem[249] = 8'h00;
+        DUT.fetch.imem.mem[250] = 8'h00;
+
+        #10 reset = 0; 
+        
+        $display("=== Starting Test: JZ, Flush, and Hazard Handling ===");
+        $display("Expected Sequence:");
+        $display("  1. SUB R1, R2 -> Z=1");
+        $display("  2. LDM R3, #0E -> Load Target (Wait 3 cycles for WB)");
+        $display("  3. JZ R3 -> Jump to 0x0E");
+        $display("  4. Instruction at 0x0C (LDM R0, EE) MUST be flushed.");
+        $display("  5. Execution resumes at 0x0E (LDM R0, 55).");
+        $display("  6. Output should be 55.");
+
+        #300;
+        
+        $display("\n=== Final Results ===");
+        $display("R0 Value: %h (Expected: 55)", DUT.rf.regs[0]);
+        $display("R3 Value: %h (Expected: 0E)", DUT.rf.regs[3]);
+        
+        if (DUT.rf.regs[0] === 8'h55)
+            $display("[SUCCESS] Branch Logic & Hazard Fix passed.");
+        else
+            $display("[FAILURE] Branch Logic failed (R0=%h).", DUT.rf.regs[0]);
+
+        $finish;
+    end
+
+    initial begin
+        $dumpfile("dump.vcd");
+        $dumpvars(0, tb_ProcessorTop);
+    end
+
+endmodule

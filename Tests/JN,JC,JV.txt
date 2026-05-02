@@ -1,0 +1,153 @@
+module tb_ProcessorTop();
+
+    reg clk, reset;
+    reg [7:0] IN_PORT;
+    wire [7:0] OUT_PORT;
+
+    ProcessorTop DUT(
+        .clk(clk), 
+        .reset(reset), 
+        .IN_PORT(IN_PORT), 
+        .OUT_PORT(OUT_PORT)
+    );
+
+    always #5 clk = ~clk;
+
+    // Monitor Flags and PC
+    initial begin
+        $monitor("Time:%3d | PC:%h | Op:%h | Flags(ZNCV):%b%b%b%b | R0:%h | Flush:%b", 
+                 $time, DUT.PC_f, DUT.opcode_e, DUT.Z, DUT.N, DUT.C, DUT.V, DUT.rf.regs[0], DUT.if_id_flush);
+    end
+
+    // Output Tracking
+    reg [7:0] out_history [0:10];
+    integer out_count;
+    always @(posedge clk) begin
+        if (OUT_PORT !== 0 && (out_count == 0 || OUT_PORT !== out_history[out_count-1])) begin
+            out_history[out_count] = OUT_PORT;
+            $display(">>> [Output Event] OUT_PORT updated to %h at time %0t", OUT_PORT, $time);
+            out_count = out_count + 1;
+        end
+    end
+
+    initial begin
+        clk = 0;
+        reset = 1;
+        IN_PORT = 8'h00;
+        out_count = 0;
+
+        #1; 
+        $display("=== Loading Opcode 9 Test (JN, JC, JV) ===");
+        
+        // ======================================================
+        // TEST 1: JN (Jump if Negative)
+        // ======================================================
+        
+        // 1. LDM R1, #0
+        DUT.fetch.imem.mem[0] = 8'hC1; DUT.fetch.imem.mem[1] = 8'h00;
+        
+        // 2. LDM R2, #5
+        DUT.fetch.imem.mem[2] = 8'hC2; DUT.fetch.imem.mem[3] = 8'h05;
+
+        // 3. SUB R1, R2 (0 - 5 = -5). Sets N=1.
+        DUT.fetch.imem.mem[4] = 8'h36; 
+
+        // 4. LDM R3, #0x0A (Target 1)
+        DUT.fetch.imem.mem[5] = 8'hC3; DUT.fetch.imem.mem[6] = 8'h0A;
+
+        // 5. JN R3 (Jump if Negative) -> To 0x0A
+        // Op=9, brx=1 (JN), rb=3 -> 97
+        DUT.fetch.imem.mem[7] = 8'h97;
+
+        // 6. TRAP (Should be skipped): LDM R0, #EE
+        DUT.fetch.imem.mem[8] = 8'hC0; DUT.fetch.imem.mem[9] = 8'hEE;
+
+        // 7. TARGET 1 (Addr 0x0A): LDM R0, #AA (Success Code for JN)
+        DUT.fetch.imem.mem[10] = 8'hC0; DUT.fetch.imem.mem[11] = 8'hAA;
+
+
+        // ======================================================
+        // TEST 2: JC (Jump if Carry)
+        // ======================================================
+
+        // 8. LDM R1, #255 (0xFF)
+        DUT.fetch.imem.mem[12] = 8'hC1; DUT.fetch.imem.mem[13] = 8'hFF;
+
+        // 9. LDM R2, #1
+        DUT.fetch.imem.mem[14] = 8'hC2; DUT.fetch.imem.mem[15] = 8'h01;
+
+        // 10. ADD R1, R2 (255 + 1 = 0 + Carry). Sets C=1.
+        DUT.fetch.imem.mem[16] = 8'h26; 
+
+        // 11. LDM R3, #0x16 (Target 2)
+        DUT.fetch.imem.mem[17] = 8'hC3; DUT.fetch.imem.mem[18] = 8'h16;
+
+        // 12. JC R3 (Jump if Carry) -> To 0x16
+        // Op=9, brx=2 (JC), rb=3 -> 9B
+        DUT.fetch.imem.mem[19] = 8'h9B;
+
+        // 13. TRAP (Should be skipped): LDM R0, #EE
+        DUT.fetch.imem.mem[20] = 8'hC0; DUT.fetch.imem.mem[21] = 8'hEE;
+
+        // 14. TARGET 2 (Addr 0x16): LDM R0, #BB (Success Code for JC)
+        DUT.fetch.imem.mem[22] = 8'hC0; DUT.fetch.imem.mem[23] = 8'hBB;
+
+
+        // ======================================================
+        // TEST 3: JV (Jump if Overflow)
+        // ======================================================
+
+        // 15. LDM R1, #127 (0x7F) - Largest Positive Signed Integer
+        DUT.fetch.imem.mem[24] = 8'hC1; DUT.fetch.imem.mem[25] = 8'h7F;
+
+        // 16. LDM R2, #1
+        DUT.fetch.imem.mem[26] = 8'hC2; DUT.fetch.imem.mem[27] = 8'h01;
+
+        // 17. ADD R1, R2 (127 + 1 = 128). 128 is -128 in signed. 
+        // Positive + Positive = Negative -> Sets V=1.
+        DUT.fetch.imem.mem[28] = 8'h26; 
+
+        // 18. LDM R3, #0x22 (Target 3)
+        DUT.fetch.imem.mem[29] = 8'hC3; DUT.fetch.imem.mem[30] = 8'h22;
+
+        // 19. JV R3 (Jump if Overflow) -> To 0x22
+        // Op=9, brx=3 (JV), rb=3 -> 9F
+        DUT.fetch.imem.mem[31] = 8'h9F;
+
+        // 20. TRAP (Should be skipped): LDM R0, #EE
+        DUT.fetch.imem.mem[32] = 8'hC0; DUT.fetch.imem.mem[33] = 8'hEE;
+
+        // 21. TARGET 3 (Addr 0x22): LDM R0, #CC (Success Code for JV)
+        DUT.fetch.imem.mem[34] = 8'hC0; DUT.fetch.imem.mem[35] = 8'hCC;
+
+        // 22. OUT R0 (Should output CC)
+        DUT.fetch.imem.mem[36] = 8'h78;
+        DUT.fetch.imem.mem[37] = 8'h00;
+
+        #10 reset = 0; 
+        
+        $display("=== Starting Test: JN, JC, JV ===");
+        $display("Expected Sequence in R0:");
+        $display("  1. AA (JN success)");
+        $display("  2. BB (JC success)");
+        $display("  3. CC (JV success)");
+        
+        #500;
+        
+        $display("\n=== Final Results ===");
+        $display("R0 Value: %h (Expected: CC)", DUT.rf.regs[0]);
+        
+        if (DUT.rf.regs[0] === 8'hCC)
+            $display("[SUCCESS] All Conditional Branches passed.");
+        else
+            $display("[FAILURE] Branch Logic failed (R0=%h).", DUT.rf.regs[0]);
+
+        $finish;
+    end
+
+    initial begin
+        $dumpfile("dump.vcd");
+        $dumpvars(0, tb_ProcessorTop);
+    end
+
+endmodule
